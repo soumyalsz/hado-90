@@ -5,7 +5,7 @@ import yaml
 import json
 import httpx
 from jsonschema import validate
-from runner.config import OLLAMA_BASE_URL, TARGET_MODEL, JUDGE_MODEL
+from runner.config import OLLAMA_BASE_URL, TARGET_MODEL, JUDGE_MODEL, DEFENSE_MODE, TARGET_SYSTEM_SHIELD
 from runner.judge import evaluate_response
 from runner.quote_validator import validate_judge_citations
 from runner.aggregator import aggregate_run_results
@@ -49,11 +49,19 @@ def log_discovered_vulnerability(attack_id: str, category: str, severity: str, m
 
 async def execute_target_inference(client: httpx.AsyncClient, prompt: str) -> str:
     try:
+        messages = []
+        
+        # The shield only gets injected if your master switch is turned ON
+        if DEFENSE_MODE:
+            messages.append({"role": "system", "content": TARGET_SYSTEM_SHIELD})
+        
+        messages.append({"role": "user", "content": prompt})
+
         response = await client.post(
             f"{OLLAMA_BASE_URL}/chat",
             json={
                 "model": TARGET_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
                 "stream": False,
                 "keep_alive": 0,
                 "options": {"temperature": 0.0}
