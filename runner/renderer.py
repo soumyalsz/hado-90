@@ -112,18 +112,26 @@ def generate_html_report(report_data: dict, output_path: str | None = None):
             document.addEventListener('DOMContentLoaded', () => {{
                 const params = new URLSearchParams(window.location.search);
                 const view = params.get('view');
-                if (view === 'analytics') {{
-                    document.getElementById('test-cases')?.remove();
-                }} else if (view === 'test-cases') {{
+                if (view) {{
+                    document.body.classList.add('iframe-mode');
+                    document.querySelector('.page')?.classList.add('iframe-mode');
                     document.querySelector('header')?.remove();
-                    document.getElementById('analytics')?.remove();
-                    document.querySelector('.section-title')?.remove();
-                    document.querySelector('.card')?.remove();
+                    
+                    if (view === 'analytics') {{
+                        document.getElementById('test-cases')?.remove();
+                    }} else if (view === 'test-cases') {{
+                        document.getElementById('analytics')?.remove();
+                        document.querySelector('.card')?.remove();
+                        document.querySelectorAll('.section-title').forEach(el => el.remove());
+                    }}
                 }}
             }});
         </script>
         <style>
             :root {{ color-scheme: dark; }}
+            ::-webkit-scrollbar {{ width: 6px; height: 6px; }}
+            ::-webkit-scrollbar-track {{ background: transparent; }}
+            ::-webkit-scrollbar-thumb {{ background: #2a2a2a; border-radius: 999px; }}
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
             html, body {{ height: 100%; }}
             body {{
@@ -132,10 +140,16 @@ def generate_html_report(report_data: dict, output_path: str | None = None):
                 color: #f5f5f5;
                 line-height: 1.5;
             }}
+            body.iframe-mode {{
+                background: transparent;
+            }}
             .page {{
                 max-width: 1200px;
                 margin: 0 auto;
                 padding: 24px;
+            }}
+            .page.iframe-mode {{
+                padding: 4px 12px;
             }}
             .card {{
                 background: #0b0b0b;

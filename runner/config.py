@@ -42,12 +42,19 @@ def resolve_runtime_models() -> tuple[str, str]:
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/api")
 
+# Default models configuration
+# You can easily override these by setting environment variables before running.
+# For example: export TARGET_MODEL="mistral:7b"
+
 TARGET_MODEL = os.getenv("TARGET_MODEL", "llama3.2:1b")
 JUDGE_MODEL_A = os.getenv("JUDGE_MODEL_A", "llama3.1:8b")
 JUDGE_MODEL_B = os.getenv("JUDGE_MODEL_B", "qwen2.5:14b")
 JUDGE_MODEL = JUDGE_MODEL_A
 MUTATOR_MODEL = os.getenv("MUTATOR_MODEL", "llama3.2:3b")
 DEFENSE_MODE = os.getenv("DEFENSE_MODE", "False").lower() == "true"
+
+# The lists below are just examples based on a specific local setup.
+# You can replace these with whatever models you have pulled in your local Ollama instance (e.g., 'gemma:7b', 'phi3').
 
 AVAILABLE_TARGETS = [
     "llama3.2:1b",
