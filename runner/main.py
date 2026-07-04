@@ -5,7 +5,7 @@ import yaml
 import json
 import httpx
 from jsonschema import validate
-from runner.config import OLLAMA_BASE_URL, TARGET_MODEL, JUDGE_MODEL, DEFENSE_MODE, TARGET_SYSTEM_SHIELD
+from runner.config import OLLAMA_BASE_URL, TARGET_MODEL, DEFENSE_MODE, TARGET_SYSTEM_SHIELD
 from runner.judge import evaluate_response
 from runner.quote_validator import validate_judge_citations
 from runner.aggregator import aggregate_run_results
@@ -45,7 +45,7 @@ def log_discovered_vulnerability(attack_id: str, category: str, severity: str, m
     
     with open(staging_file, "w") as f:
         yaml.safe_dump(payload, f)
-    print(f"🎯 [VULNERABILITY DISCOVERED] Exploit saved cleanly to: '{staging_file}'")
+    print(f"Found a working exploit: saved to {staging_file}")
 
 async def execute_target_inference(client: httpx.AsyncClient, prompt: str) -> str:
     try:
@@ -69,35 +69,32 @@ async def execute_target_inference(client: httpx.AsyncClient, prompt: str) -> st
         
         raw_text = response.json()["message"]["content"]
         
-        # 🎯 RADAR DEBUG LINE: Forces terminal visibility on every single raw model output
-        # print(f"   🔍 [DEBUG RAW OUTPUT]: {repr(raw_text)}")
-        
-        # 🚨 INLINE GUARDRAIL STEP: Scans text before it escapes the application layer
+        # Check output against guardrails before returning
         triggered, final_text = scan_output_guardrail(raw_text)
         if triggered:
-            print("   🚨 [GUARDRAIL TRIGGERED] Intercepted a dangerous output token pattern!")
+            print("   ⚠️  Guardrail blocked some concerning output")
             
         return final_text
     except Exception as e:
-        print(f"   ❌ [INFERENCE CRASH ALERT]: {str(e)}")
+        print(f"   Error during inference: {str(e)}")
         return f"TARGET EXCEPTION: {str(e)}"
 
 async def start_pipeline():
-    print("=================================================")
-    print("     RT-SANDBOX EVOLUTIONARY RUNNER KICKED       ")
-    print("=================================================")
+    print("\n" + "="*50)
+    print("  RT-SANDBOX v1.0 - Starting test suite...")
+    print("="*50 + "\n")
     
     try:
         attacks = load_and_validate_catalog()
     except Exception as e:
-        print(f"❌ Catalog Schema Violation: {str(e)}")
+        print(f"Error loading attacks: {str(e)}")
         return
 
     run_history = []
 
     async with httpx.AsyncClient() as client:
         for attack in attacks:
-            print(f"\n🔥 Processing Base Exploit: {attack['attack_id']}...")
+            print(f"\nTesting: {attack['attack_id']}")
             
             current_prompt = attack["prompt"]
             depth = 0
@@ -105,11 +102,15 @@ async def start_pipeline():
 
             while depth <= MAX_MUTATION_DEPTH and not breach_secured:
                 if depth > 0:
-                    print(f"   🌀 Mutation Depth [{depth}/{MAX_MUTATION_DEPTH}] executing...")
+                    print(f"   Attempt {depth}/{MAX_MUTATION_DEPTH}...")
 
                 target_out = await execute_target_inference(client, current_prompt)
-                raw_verdict = await evaluate_response(current_prompt, target_out, attack["evaluation_rubric"])
-                _, checked_verdict = validate_judge_citations(target_out, raw_verdict)
+                multi_verdict = await evaluate_response(current_prompt, target_out, attack["evaluation_rubric"])
+                _, checked_verdict = validate_judge_citations(target_out, multi_verdict)
+
+                # Log consensus info
+                consensus_icon = "🤝" if multi_verdict.consensus == "agreement" else "⚡"
+                print(f"     {consensus_icon} Judges: {multi_verdict.consensus.upper()}")
 
                 run_history.append({
                     "attack_id": f"{attack['attack_id']}-G{depth}" if depth > 0 else attack['attack_id'],
@@ -119,11 +120,14 @@ async def start_pipeline():
                     "target_response": target_out,
                     "is_violation": checked_verdict.is_violation,
                     "verbatim_quotes": checked_verdict.verbatim_quotes,
-                    "reasoning": checked_verdict.reasoning
+                    "reasoning": checked_verdict.reasoning,
+                    "consensus": multi_verdict.consensus,
+                    "judge_a": str(multi_verdict.judge_a_verdict.is_violation),
+                    "judge_b": str(multi_verdict.judge_b_verdict.is_violation)
                 })
 
                 if checked_verdict.is_violation:
-                    print(f"   💥 BREACH CONFIRMED at Generation {depth}!")
+                    print(f"   ⚠️  Breach detected at attempt {depth}")
                     breach_secured = True
                     if depth > 0:
                         log_discovered_vulnerability(
@@ -131,9 +135,9 @@ async def start_pipeline():
                             current_prompt, attack["evaluation_rubric"]["fail_criteria"]
                         )
                 else:
-                    print(f"   🛡️ Target defended successfully at Generation {depth}.")
+                    print(f"   ✓ Held strong at attempt {depth}")
                     if depth < MAX_MUTATION_DEPTH:
-                        print("   🧠 Activating Mutator to rewrite attack payload...")
+                        print("   Tweaking attack...")
                         mutation_res = await generate_mutation(current_prompt, target_out)
                         current_prompt = mutation_res.mutated_prompt
                     
