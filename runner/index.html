@@ -71,16 +71,35 @@
 
             <section class="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
                 <div class="mb-4 flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <h2 class="text-[11px] uppercase tracking-[0.3em] text-zinc-500">analytics</h2>
+                    <h2 class="text-[11px] uppercase tracking-[0.3em] text-zinc-500">workspace view</h2>
                     <button onclick="reloadReportPanel()" class="rounded-full border border-zinc-800 bg-black/70 px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200">
                         refresh
                     </button>
                 </div>
-                <div class="relative h-[560px] overflow-hidden rounded-2xl border border-zinc-800 bg-black/70">
-                    <iframe id="reportFrame" src="" class="hidden h-full w-full border-0"></iframe>
-                    <div id="iframePlaceholder" class="absolute inset-0 flex flex-col items-center justify-center px-8 text-center text-zinc-500">
-                        <p class="text-sm text-zinc-300">No report is currently loaded.</p>
-                        <p class="mt-2 text-xs uppercase tracking-[0.24em] text-zinc-600">Run the audit suite to populate this view.</p>
+                <div class="grid gap-4 xl:grid-cols-2">
+                    <div class="rounded-2xl border border-zinc-800 bg-black/70 p-3">
+                        <div class="mb-3 border-b border-zinc-800 pb-2">
+                            <h3 class="text-[11px] uppercase tracking-[0.3em] text-zinc-500">analytics</h3>
+                        </div>
+                        <div class="relative h-[260px] overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/80">
+                            <iframe id="analyticsFrame" srcdoc="" class="hidden h-full w-full border-0"></iframe>
+                            <div id="analyticsPlaceholder" class="absolute inset-0 flex flex-col items-center justify-center px-6 text-center text-zinc-500">
+                                <p class="text-sm text-zinc-300">No analytics summary available.</p>
+                                <p class="mt-2 text-xs uppercase tracking-[0.24em] text-zinc-600">Run the suite to populate this panel.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-2xl border border-zinc-800 bg-black/70 p-3">
+                        <div class="mb-3 border-b border-zinc-800 pb-2">
+                            <h3 class="text-[11px] uppercase tracking-[0.3em] text-zinc-500">test cases</h3>
+                        </div>
+                        <div class="relative h-[260px] overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/80">
+                            <iframe id="testCasesFrame" srcdoc="" class="hidden h-full w-full border-0"></iframe>
+                            <div id="testCasesPlaceholder" class="absolute inset-0 flex flex-col items-center justify-center px-6 text-center text-zinc-500">
+                                <p class="text-sm text-zinc-300">No test cases available.</p>
+                                <p class="mt-2 text-xs uppercase tracking-[0.24em] text-zinc-600">Detailed findings will appear here.</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -90,29 +109,57 @@
     <script>
         let ws;
 
+        function formatLogMessage(message) {
+            const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            let label = 'INFO';
+            let colorClass = 'text-zinc-300';
+
+            if (message.includes('ERROR') || message.includes('FAILED') || message.includes('FAIL')) {
+                label = 'ERROR';
+                colorClass = 'text-red-400';
+            } else if (message.includes('PASS') || message.includes('SUCCESS') || message.includes('complete') || message.includes('ready')) {
+                label = 'SUCCESS';
+                colorClass = 'text-emerald-400';
+            } else if (message.includes('Testing:') || message.includes('Running') || message.includes('Scanning')) {
+                label = 'RUN';
+                colorClass = 'text-sky-400';
+            } else if (message.includes('warning') || message.includes('WARN')) {
+                label = 'WARN';
+                colorClass = 'text-amber-400';
+            }
+
+            return { timestamp, label, colorClass, message };
+        }
+
+        function appendTerminalEntry(message) {
+            const terminal = document.getElementById('terminal');
+            const { timestamp, label, colorClass } = formatLogMessage(message);
+
+            const entry = document.createElement('div');
+            entry.className = 'rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2';
+
+            const meta = document.createElement('div');
+            meta.className = 'mb-1 text-[10px] uppercase tracking-[0.24em] text-zinc-600';
+            meta.textContent = `${timestamp} · ${label}`;
+
+            const body = document.createElement('div');
+            body.className = `${colorClass} break-words text-[12px] leading-5`;
+            body.textContent = message;
+
+            entry.appendChild(meta);
+            entry.appendChild(body);
+            terminal.appendChild(entry);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
         function connectLogsWebSocket() {
             const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
             ws = new WebSocket(`${protocol}//${window.location.host}/ws/logs`);
 
             ws.onmessage = function(event) {
-                const terminal = document.getElementById('terminal');
-                const cleanMsg = event.data;
+                appendTerminalEntry(event.data);
 
-                const logLine = document.createElement('div');
-                logLine.textContent = cleanMsg;
-
-                if (cleanMsg.includes('ERROR') || cleanMsg.includes('FAILED') || cleanMsg.includes('FAIL')) {
-                    logLine.className = 'text-red-400 font-medium';
-                } else if (cleanMsg.includes('PASS') || cleanMsg.includes('SUCCESS') || cleanMsg.includes('complete') || cleanMsg.includes('ready')) {
-                    logLine.className = 'text-emerald-400';
-                } else if (cleanMsg.includes('Testing:')) {
-                    logLine.className = 'mt-2 border-t border-zinc-800 pt-2 text-sky-400';
-                }
-
-                terminal.appendChild(logLine);
-                terminal.scrollTop = terminal.scrollHeight;
-
-                if (cleanMsg.includes('Dashboard generated')) {
+                if (event.data.includes('Dashboard generated')) {
                     setTimeout(reloadReportPanel, 800);
                 }
             };
@@ -128,7 +175,9 @@
 
             runBtn.disabled = true;
             runBtn.classList.add('opacity-50', 'cursor-not-allowed');
-            terminal.innerHTML = '<div class="text-zinc-300">// Preparing runtime workers and starting the audit loop.</div>';
+            terminal.innerHTML = '';
+            appendTerminalEntry('Boot sequence initialized. Preparing runtime workers and starting the audit loop.');
+            appendTerminalEntry('Scanning target profile and routing requests through the safety judges.');
 
             try {
                 await fetch('/api/run', { method: 'POST' });
@@ -142,14 +191,32 @@
             }
         }
 
-        function reloadReportPanel() {
-            const iframe = document.getElementById('reportFrame');
-            const placeholder = document.getElementById('iframePlaceholder');
+        async function reloadReportPanel() {
+            const analyticsFrame = document.getElementById('analyticsFrame');
+            const testCasesFrame = document.getElementById('testCasesFrame');
+            const analyticsPlaceholder = document.getElementById('analyticsPlaceholder');
+            const testCasesPlaceholder = document.getElementById('testCasesPlaceholder');
             const runBtn = document.getElementById('runBtn');
 
-            iframe.src = `/reports/dashboard.html?t=${new Date().getTime()}`;
-            iframe.classList.remove('hidden');
-            placeholder.classList.add('hidden');
+            try {
+                const reportResponse = await fetch(`/reports/dashboard.html?t=${new Date().getTime()}`);
+                const reportHtml = await reportResponse.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(reportHtml, 'text/html');
+                const styles = Array.from(doc.querySelectorAll('style')).map(style => style.textContent).join('\n');
+                const analyticsSection = doc.getElementById('analytics')?.outerHTML || '<div style="color:#f5f5f5;padding:12px;font-family:Inter,sans-serif;background:#050505;">No analytics content available.</div>';
+                const testCasesSection = doc.getElementById('test-cases')?.outerHTML || '<div style="color:#f5f5f5;padding:12px;font-family:Inter,sans-serif;background:#050505;">No test case content available.</div>';
+
+                analyticsFrame.srcdoc = `<style>${styles}</style>${analyticsSection}`;
+                testCasesFrame.srcdoc = `<style>${styles}</style>${testCasesSection}`;
+                analyticsFrame.classList.remove('hidden');
+                testCasesFrame.classList.remove('hidden');
+                analyticsPlaceholder.classList.add('hidden');
+                testCasesPlaceholder.classList.add('hidden');
+            } catch (err) {
+                analyticsFrame.srcdoc = `<div style="color:#f5f5f5;padding:12px;font-family:Inter,sans-serif;background:#050505;">Unable to load report content.</div>`;
+                testCasesFrame.srcdoc = `<div style="color:#f5f5f5;padding:12px;font-family:Inter,sans-serif;background:#050505;">Unable to load report content.</div>`;
+            }
 
             runBtn.disabled = false;
             runBtn.classList.remove('opacity-50', 'cursor-not-allowed');

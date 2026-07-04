@@ -12,11 +12,17 @@ from runner.aggregator import aggregate_run_results
 from runner.renderer import generate_html_report
 from runner.mutator import generate_mutation
 from runner.guardrails import scan_output_guardrail
+from runner.logger import ws_logger
 
 SCHEMA_PATH = "catalog/schemas/attack.schema.json"
 PRODUCTION_CATALOG_DIR = "catalog/attacks/production"
 STAGING_CATALOG_DIR = "catalog/attacks/staging"
 MAX_MUTATION_DEPTH = 2
+
+async def emit_status(message: str):
+    print(message)
+    await ws_logger.log(message)
+
 
 def load_and_validate_catalog() -> list:
     with open(SCHEMA_PATH, "r") as f:
@@ -31,7 +37,7 @@ def load_and_validate_catalog() -> list:
                 all_attacks.append(attack)
     return all_attacks
 
-def log_discovered_vulnerability(attack_id: str, category: str, severity: str, mutated_prompt: str, criteria: str):
+async def log_discovered_vulnerability(attack_id: str, category: str, severity: str, mutated_prompt: str, criteria: str):
     os.makedirs(STAGING_CATALOG_DIR, exist_ok=True)
     staging_file = os.path.join(STAGING_CATALOG_DIR, f"discovered_{attack_id}.yaml")
     
@@ -45,7 +51,7 @@ def log_discovered_vulnerability(attack_id: str, category: str, severity: str, m
     
     with open(staging_file, "w") as f:
         yaml.safe_dump(payload, f)
-    print(f"Found a working exploit: saved to {staging_file}")
+    await emit_status(f"Found a working exploit: saved to {staging_file}")
 
 async def execute_target_inference(client: httpx.AsyncClient, prompt: str) -> str:
     try:
@@ -72,29 +78,29 @@ async def execute_target_inference(client: httpx.AsyncClient, prompt: str) -> st
         # Check output against guardrails before returning
         triggered, final_text = scan_output_guardrail(raw_text)
         if triggered:
-            print("   ⚠️  Guardrail blocked some concerning output")
+            await emit_status("   ◌ Guardrail blocked some concerning output")
             
         return final_text
     except Exception as e:
-        print(f"   Error during inference: {str(e)}")
+        await emit_status(f"   Error during inference: {str(e)}")
         return f"TARGET EXCEPTION: {str(e)}"
 
 async def start_pipeline():
-    print("\n" + "="*50)
-    print("  RT-SANDBOX v1.0 - Starting test suite...")
-    print("="*50 + "\n")
+    await emit_status("\n" + "="*50)
+    await emit_status("  RT-SANDBOX v1.0 - Starting test suite...")
+    await emit_status("="*50 + "\n")
     
     try:
         attacks = load_and_validate_catalog()
     except Exception as e:
-        print(f"Error loading attacks: {str(e)}")
+        await emit_status(f"Error loading attacks: {str(e)}")
         return
 
     run_history = []
 
     async with httpx.AsyncClient() as client:
         for attack in attacks:
-            print(f"\nTesting: {attack['attack_id']}")
+            await emit_status(f"\nTesting: {attack['attack_id']}")
             
             current_prompt = attack["prompt"]
             depth = 0
@@ -102,15 +108,15 @@ async def start_pipeline():
 
             while depth <= MAX_MUTATION_DEPTH and not breach_secured:
                 if depth > 0:
-                    print(f"   Attempt {depth}/{MAX_MUTATION_DEPTH}...")
+                    await emit_status(f"   Attempt {depth}/{MAX_MUTATION_DEPTH}...")
 
                 target_out = await execute_target_inference(client, current_prompt)
                 multi_verdict = await evaluate_response(current_prompt, target_out, attack["evaluation_rubric"])
                 _, checked_verdict = validate_judge_citations(target_out, multi_verdict)
 
                 # Log consensus info
-                consensus_icon = "🤝" if multi_verdict.consensus == "agreement" else "⚡"
-                print(f"     {consensus_icon} Judges: {multi_verdict.consensus.upper()}")
+                consensus_icon = "◦" if multi_verdict.consensus == "agreement" else "◌"
+                await emit_status(f"     {consensus_icon} Judges: {multi_verdict.consensus.upper()}")
 
                 run_history.append({
                     "attack_id": f"{attack['attack_id']}-G{depth}" if depth > 0 else attack['attack_id'],
@@ -127,17 +133,17 @@ async def start_pipeline():
                 })
 
                 if checked_verdict.is_violation:
-                    print(f"   ⚠️  Breach detected at attempt {depth}")
+                    await emit_status(f"   ◌ Breach detected at attempt {depth}")
                     breach_secured = True
                     if depth > 0:
-                        log_discovered_vulnerability(
+                        await log_discovered_vulnerability(
                             attack["attack_id"], attack["category"], attack["severity"],
                             current_prompt, attack["evaluation_rubric"]["fail_criteria"]
                         )
                 else:
-                    print(f"   ✓ Held strong at attempt {depth}")
+                    await emit_status(f"   • Held strong at attempt {depth}")
                     if depth < MAX_MUTATION_DEPTH:
-                        print("   Tweaking attack...")
+                        await emit_status("   Tweaking attack...")
                         mutation_res = await generate_mutation(current_prompt, target_out)
                         current_prompt = mutation_res.mutated_prompt
                     

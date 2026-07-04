@@ -1,57 +1,89 @@
 import os
+from pathlib import Path
+from html import escape
 
-def generate_html_report(report_data: dict, output_path: str = "reports/dashboard.html"):
-    """Compiles aggregated run details into a self-contained CSS-styled HTML file."""
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _safe_text(value) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, (list, tuple, set)):
+        return escape(", ".join(str(item) for item in value))
+    return escape(str(value))
+
+
+def generate_html_report(report_data: dict, output_path: str | None = None):
+    """Compiles aggregated run details into a self-contained, minimalist dark HTML report."""
+    if output_path is None:
+        output_path = str(BASE_DIR / "reports" / "dashboard.html")
+    else:
+        output_path = Path(output_path)
+        if not output_path.is_absolute():
+            output_path = BASE_DIR / output_path
+        output_path = str(output_path)
+
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    meta = report_data["meta"]
-    
-    # Build dynamic category table rows
+
+    meta = report_data.get("meta", {})
+    categories = report_data.get("categories", {})
+    raw_details = report_data.get("raw_details", [])
+
     table_rows = ""
-    for cat, stats in report_data["categories"].items():
-        status_color = "#0f0" if stats["pass_rate"] == 100 else "#f33" if stats["pass_rate"] < 50 else "#f90"
+    for cat, stats in categories.items():
+        pass_rate = stats.get("pass_rate", 0)
+        if pass_rate >= 100:
+            rate_color = "#4ade80"
+        elif pass_rate >= 70:
+            rate_color = "#fbbf24"
+        else:
+            rate_color = "#f87171"
+
         table_rows += f"""
         <tr>
-            <td>{cat}</td>
-            <td>{stats['scanned']}</td>
-            <td style="color: #0f0;">{stats['passed']}</td>
-            <td style="color: #f33;">{stats['failed']}</td>
-            <td style="color: {status_color}; font-weight: 500;">{stats['pass_rate']}%</td>
+            <td>{_safe_text(cat)}</td>
+            <td>{stats.get('scanned', 0)}</td>
+            <td class="mono">{stats.get('passed', 0)}</td>
+            <td class="mono fail">{stats.get('failed', 0)}</td>
+            <td class="status" style="color: {rate_color};">{pass_rate}%</td>
         </tr>
         """
 
-    # Build detailed test cards
     detail_cards = ""
-    for res in report_data["raw_details"]:
-        badge_color = "#f33" if res["is_violation"] else "#0f0"
-        badge_text = "BREACH" if res["is_violation"] else "PASS"
-        
+    for res in raw_details:
+        is_violation = bool(res.get("is_violation"))
+        badge_color = "#f87171" if is_violation else "#4ade80"
+        badge_text = "BREACH" if is_violation else "PASS"
+        badge_class = "badge breach" if is_violation else "badge pass"
+
         detail_cards += f"""
-        <div class="detail-card" style="border-left-color: {badge_color};">
+        <article class="detail-card">
             <div class="detail-header">
-                <span class="detail-id">{res['attack_id']}</span>
-                <span class="detail-cat">{res['category']}</span>
-                <span class="badge" style="background: {badge_color};">{badge_text}</span>
+                <div>
+                    <div class="detail-id">{_safe_text(res.get('attack_id', 'N/A'))}</div>
+                    <div class="detail-cat">{_safe_text(res.get('category', 'unknown'))}</div>
+                </div>
+                <span class="{badge_class}" style="border-color: {badge_color}; color: {badge_color};">{badge_text}</span>
             </div>
             <div class="detail-content">
                 <div class="detail-field">
                     <span class="label">Prompt</span>
-                    <span class="value">{res['prompt']}</span>
+                    <span class="value">{_safe_text(res.get('prompt', ''))}</span>
                 </div>
                 <div class="detail-field">
                     <span class="label">Response</span>
-                    <span class="value code">{res['target_response']}</span>
+                    <span class="value code">{_safe_text(res.get('target_response', ''))}</span>
                 </div>
                 <div class="detail-field">
                     <span class="label">Verified</span>
-                    <span class="value quote">{res['verbatim_quotes']}</span>
+                    <span class="value quote">{_safe_text(res.get('verbatim_quotes', []))}</span>
                 </div>
                 <div class="detail-field">
                     <span class="label">Justification</span>
-                    <span class="value reason">{res['reasoning']}</span>
+                    <span class="value reason">{_safe_text(res.get('reasoning', ''))}</span>
                 </div>
             </div>
-        </div>
+        </article>
         """
 
     html_content = f"""
@@ -60,256 +92,239 @@ def generate_html_report(report_data: dict, output_path: str = "reports/dashboar
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>RT-SANDBOX Safety Audit</title>
+        <title>RT-SANDBOX // Security Audit</title>
         <style>
+            :root {{ color-scheme: dark; }}
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            
             html, body {{ height: 100%; }}
-            
             body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+                font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
                 background: #000000;
-                color: #e0e0e0;
-                line-height: 1.6;
+                color: #f5f5f5;
+                line-height: 1.5;
             }}
-            
-            .container {{
+            .page {{
                 max-width: 1200px;
                 margin: 0 auto;
-                padding: 48px 24px;
+                padding: 24px;
             }}
-            
-            h1 {{
-                font-size: 32px;
-                font-weight: 300;
-                letter-spacing: -0.5px;
-                margin-bottom: 8px;
-                color: #ffffff;
+            .card {{
+                background: #0b0b0b;
+                border: 1px solid #1f1f1f;
+                border-radius: 18px;
+                padding: 20px;
+                box-shadow: 0 0 0 1px rgba(255,255,255,0.02);
             }}
-            
-            h2 {{
-                font-size: 18px;
-                font-weight: 400;
-                letter-spacing: 0.5px;
-                margin-top: 48px;
-                margin-bottom: 24px;
-                color: #b0b0b0;
+            .header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 16px;
+                margin-bottom: 20px;
+            }}
+            .brand h1 {{
+                font-size: 24px;
+                font-weight: 600;
+                letter-spacing: 0.16em;
                 text-transform: uppercase;
             }}
-            
-            .subtitle {{
-                color: #808080;
-                font-size: 13px;
-                margin-bottom: 32px;
-                letter-spacing: 0.3px;
+            .brand p {{
+                margin-top: 4px;
+                font-size: 11px;
+                letter-spacing: 0.32em;
+                text-transform: uppercase;
+                color: #7a7a7a;
             }}
-            
+            .status-pill {{
+                border: 1px solid #1f1f1f;
+                border-radius: 999px;
+                padding: 8px 12px;
+                font-size: 11px;
+                letter-spacing: 0.24em;
+                text-transform: uppercase;
+                color: #bdbdbd;
+                background: #050505;
+            }}
             .stats-grid {{
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
                 gap: 12px;
-                margin-bottom: 48px;
+                margin-bottom: 20px;
             }}
-            
             .stat-card {{
-                background: #111111;
-                border: 1px solid #222222;
-                padding: 24px;
-                border-radius: 4px;
-                transition: background 0.3s ease;
+                background: #080808;
+                border: 1px solid #1c1c1c;
+                border-radius: 14px;
+                padding: 16px;
             }}
-            
-            .stat-card:hover {{
-                background: #1a1a1a;
-            }}
-            
             .stat-label {{
-                color: #666666;
-                font-size: 11px;
-                text-transform: uppercase;
-                letter-spacing: 0.8px;
-                margin-bottom: 12px;
                 display: block;
+                font-size: 10px;
+                letter-spacing: 0.28em;
+                text-transform: uppercase;
+                color: #686868;
+                margin-bottom: 8px;
             }}
-            
             .stat-value {{
-                font-size: 36px;
-                font-weight: 300;
-                color: #ffffff;
+                font-size: 28px;
+                font-weight: 500;
+                color: #f5f5f5;
             }}
-            
-            .stat-value.pass {{ color: #0f0; }}
-            .stat-value.fail {{ color: #f33; }}
-            .stat-value.warn {{ color: #f90; }}
-            
+            .stat-value.pass {{ color: #4ade80; }}
+            .stat-value.fail {{ color: #f87171; }}
+            .stat-value.warn {{ color: #fbbf24; }}
+            .section-title {{
+                font-size: 11px;
+                letter-spacing: 0.3em;
+                text-transform: uppercase;
+                color: #6f6f6f;
+                margin: 24px 0 12px;
+            }}
             table {{
                 width: 100%;
                 border-collapse: collapse;
-                margin-bottom: 48px;
+                overflow: hidden;
+                border-radius: 14px;
             }}
-            
-            th {{
+            th, td {{
+                padding: 12px 10px;
+                border-bottom: 1px solid #171717;
                 text-align: left;
-                padding: 16px 12px;
-                border-bottom: 1px solid #222222;
-                color: #666666;
-                font-size: 11px;
-                font-weight: 500;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }}
-            
-            td {{
-                padding: 12px;
-                border-bottom: 1px solid #1a1a1a;
                 font-size: 13px;
             }}
-            
-            tr:hover {{
-                background: #0a0a0a;
+            th {{
+                color: #7a7a7a;
+                text-transform: uppercase;
+                letter-spacing: 0.24em;
+                font-size: 10px;
             }}
-            
+            tbody tr:hover {{ background: #0d0d0d; }}
+            .mono {{ color: #d4d4d4; }}
+            .fail {{ color: #f87171; }}
+            .status {{ font-weight: 600; }}
             .detail-card {{
-                background: #0d0d0d;
-                border-left: 3px solid #222222;
-                border-radius: 2px;
-                overflow: hidden;
+                background: #080808;
+                border: 1px solid #1b1b1b;
+                border-radius: 16px;
                 margin-bottom: 12px;
-                transition: background 0.2s ease;
+                overflow: hidden;
             }}
-            
-            .detail-card:hover {{
-                background: #151515;
-            }}
-            
             .detail-header {{
                 display: flex;
-                gap: 12px;
+                justify-content: space-between;
                 align-items: center;
-                padding: 16px;
-                border-bottom: 1px solid #1a1a1a;
+                gap: 12px;
+                padding: 14px 16px;
+                border-bottom: 1px solid #171717;
             }}
-            
             .detail-id {{
-                color: #888888;
                 font-size: 12px;
-                font-family: 'Monaco', 'Courier New', monospace;
-                font-weight: 500;
+                font-family: ui-monospace, SFMono-Regular, monospace;
+                color: #f5f5f5;
+                margin-bottom: 2px;
             }}
-            
             .detail-cat {{
-                color: #666666;
-                font-size: 11px;
-                text-transform: uppercase;
-                letter-spacing: 0.3px;
-            }}
-            
-            .badge {{
-                margin-left: auto;
-                padding: 4px 10px;
                 font-size: 10px;
-                font-weight: 600;
-                border-radius: 2px;
-                color: #000000;
-                letter-spacing: 0.4px;
+                letter-spacing: 0.24em;
+                text-transform: uppercase;
+                color: #6f6f6f;
             }}
-            
-            .detail-content {{
-                padding: 16px;
+            .badge {{
+                border: 1px solid #2a2a2a;
+                border-radius: 999px;
+                padding: 5px 10px;
+                font-size: 10px;
+                letter-spacing: 0.24em;
+                text-transform: uppercase;
+                background: rgba(255,255,255,0.03);
             }}
-            
-            .detail-field {{
-                margin-bottom: 12px;
-            }}
-            
-            .detail-field:last-child {{
-                margin-bottom: 0;
-            }}
-            
+            .detail-content {{ padding: 16px; }}
+            .detail-field {{ margin-bottom: 12px; }}
+            .detail-field:last-child {{ margin-bottom: 0; }}
             .label {{
                 display: block;
-                color: #555555;
                 font-size: 10px;
+                letter-spacing: 0.28em;
                 text-transform: uppercase;
-                letter-spacing: 0.5px;
-                margin-bottom: 4px;
-                font-weight: 500;
+                color: #666666;
+                margin-bottom: 6px;
             }}
-            
             .value {{
                 display: block;
-                color: #c0c0c0;
-                font-size: 12px;
+                font-size: 13px;
+                color: #d4d4d4;
                 word-break: break-word;
             }}
-            
             .value.code {{
-                font-family: 'Monaco', 'Courier New', monospace;
-                color: #888888;
-                background: #0a0a0a;
-                padding: 8px;
-                border-radius: 2px;
-                overflow-x: auto;
+                font-family: ui-monospace, SFMono-Regular, monospace;
+                background: #050505;
+                border: 1px solid #171717;
+                border-radius: 10px;
+                padding: 10px;
+                white-space: pre-wrap;
             }}
-            
-            .value.quote {{
-                color: #f90;
-                font-style: italic;
-                padding: 4px 0;
-            }}
-            
-            .value.reason {{
-                color: #808080;
-                font-size: 11px;
-                line-height: 1.5;
+            .value.quote {{ color: #fbbf24; }}
+            .value.reason {{ color: #8f8f8f; }}
+            @media (max-width: 720px) {{
+                .page {{ padding: 16px; }}
+                .header {{ flex-direction: column; align-items: flex-start; }}
             }}
         </style>
     </head>
     <body>
-        <div class="container">
-            <h1>RT-SANDBOX v1.0</h1>
-            <p class="subtitle">Safety Audit — Automated Adversarial Testing</p>
-            
-            <div class="stats-grid">
+        <div class="page">
+            <header class="header">
+                <div class="brand">
+                    <h1>RT-SANDBOX</h1>
+                    <p>security audit</p>
+                </div>
+                <div class="status-pill">status: ready</div>
+            </header>
+
+            <section id="analytics" class="stats-grid">
                 <div class="stat-card">
-                    <span class="stat-label">Total Scanned</span>
-                    <span class="stat-value">{meta['total_scanned']}</span>
+                    <span class="stat-label">Total scanned</span>
+                    <span class="stat-value">{meta.get('total_scanned', 0)}</span>
                 </div>
                 <div class="stat-card">
                     <span class="stat-label">Breaches</span>
-                    <span class="stat-value fail">{meta['total_breaches']}</span>
+                    <span class="stat-value fail">{meta.get('total_breaches', 0)}</span>
                 </div>
                 <div class="stat-card">
-                    <span class="stat-label">Critical Alerts</span>
-                    <span class="stat-value warn">{meta['critical_alerts']}</span>
+                    <span class="stat-label">Critical alerts</span>
+                    <span class="stat-value warn">{meta.get('critical_alerts', 0)}</span>
                 </div>
                 <div class="stat-card">
-                    <span class="stat-label">Security Score</span>
-                    <span class="stat-value pass">{meta['overall_pass_rate']}%</span>
+                    <span class="stat-label">Security score</span>
+                    <span class="stat-value pass">{meta.get('overall_pass_rate', 0)}%</span>
                 </div>
+            </section>
+
+            <div class="section-title">Category results</div>
+            <div class="card">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Scanned</th>
+                            <th>Passed</th>
+                            <th>Failed</th>
+                            <th>Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody>{table_rows}</tbody>
+                </table>
             </div>
 
-            <h2>Category Results</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Category</th>
-                        <th>Scanned</th>
-                        <th>Passed</th>
-                        <th>Failed</th>
-                        <th>Rate</th>
-                    </tr>
-                </thead>
-                <tbody>{table_rows}</tbody>
-            </table>
-
-            <h2>Test Cases</h2>
-            {detail_cards}
+            <section id="test-cases">
+                <div class="section-title">Test cases</div>
+                {detail_cards}
+            </section>
         </div>
     </body>
     </html>
     """
-    
+
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     print(f"Dashboard generated: {output_path}")

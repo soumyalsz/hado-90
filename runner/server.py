@@ -1,16 +1,20 @@
 import os
 import asyncio
+from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from runner.main import start_pipeline
 from runner.logger import ws_logger
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+REPORTS_DIR = BASE_DIR / "reports"
+
 app = FastAPI(title="RT-SANDBOX Web Endpoint Gateway")
 
 # Ensure your report workspace paths exist cleanly on disk layout
-os.makedirs("reports", exist_ok=True)
-app.mount("/reports", StaticFiles(directory="reports"), name="reports")
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
 @app.get("/", response_class=HTMLResponse)
 async def read_dashboard_root():
@@ -44,4 +48,5 @@ async def websocket_logs_endpoint(websocket: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("runner.server:app", host="127.0.0.1", port=8000, reload=True)
+    reload_enabled = os.environ.get("RT_SANDBOX_RELOAD", "0").lower() in {"1", "true", "yes"}
+    uvicorn.run("runner.server:app", host="127.0.0.1", port=8000, reload=reload_enabled)
