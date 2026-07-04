@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def _safe_text(value) -> str:
+    """Escapes any value for safe HTML insertion."""
     if value is None:
         return "—"
     if isinstance(value, (list, tuple, set)):
@@ -13,8 +14,76 @@ def _safe_text(value) -> str:
     return escape(str(value))
 
 
+def _color_for_pass_rate(rate: float) -> str:
+    if rate >= 100:
+        return "#4ade80"
+    if rate >= 70:
+        return "#fbbf24"
+    return "#f87171"
+
+
+def _render_category_rows(categories: dict) -> str:
+    """Builds the <tr> elements for the category breakdown table."""
+    category_rows = ""
+    for category_name, breakdown in categories.items():
+        pass_rate = breakdown.get("pass_rate", 0)
+        rate_color = _color_for_pass_rate(pass_rate)
+
+        category_rows += f"""
+        <tr>
+            <td>{_safe_text(category_name)}</td>
+            <td>{breakdown.get('scanned', 0)}</td>
+            <td class="mono">{breakdown.get('passed', 0)}</td>
+            <td class="mono fail">{breakdown.get('failed', 0)}</td>
+            <td class="status" style="color: {rate_color};">{pass_rate}%</td>
+        </tr>
+        """
+    return category_rows
+
+
+def _render_finding_cards(findings: list) -> str:
+    """Builds the detail cards for each individual test result."""
+    finding_cards = ""
+    for finding in findings:
+        is_violation = bool(finding.get("is_violation"))
+        badge_color = "#f87171" if is_violation else "#4ade80"
+        badge_text = "BREACH" if is_violation else "PASS"
+        badge_class = "badge breach" if is_violation else "badge pass"
+
+        finding_cards += f"""
+        <article class="detail-card">
+            <div class="detail-header">
+                <div>
+                    <div class="detail-id">{_safe_text(finding.get('attack_id', 'N/A'))}</div>
+                    <div class="detail-cat">{_safe_text(finding.get('category', 'unknown'))}</div>
+                </div>
+                <span class="{badge_class}" style="border-color: {badge_color}; color: {badge_color};">{badge_text}</span>
+            </div>
+            <div class="detail-content">
+                <div class="detail-field">
+                    <span class="label">Prompt</span>
+                    <span class="value">{_safe_text(finding.get('prompt', ''))}</span>
+                </div>
+                <div class="detail-field">
+                    <span class="label">Response</span>
+                    <span class="value code">{_safe_text(finding.get('target_response', ''))}</span>
+                </div>
+                <div class="detail-field">
+                    <span class="label">Verified</span>
+                    <span class="value quote">{_safe_text(finding.get('verbatim_quotes', []))}</span>
+                </div>
+                <div class="detail-field">
+                    <span class="label">Justification</span>
+                    <span class="value reason">{_safe_text(finding.get('reasoning', ''))}</span>
+                </div>
+            </div>
+        </article>
+        """
+    return finding_cards
+
+
 def generate_html_report(report_data: dict, output_path: str | None = None):
-    """Compiles aggregated run details into a self-contained, minimalist dark HTML report."""
+    """Renders the audit results as a standalone HTML dashboard."""
     if output_path is None:
         output_path = str(BASE_DIR / "reports" / "dashboard.html")
     else:
@@ -27,64 +96,10 @@ def generate_html_report(report_data: dict, output_path: str | None = None):
 
     meta = report_data.get("meta", {})
     categories = report_data.get("categories", {})
-    raw_details = report_data.get("raw_details", [])
+    findings = report_data.get("raw_details", [])
 
-    table_rows = ""
-    for cat, stats in categories.items():
-        pass_rate = stats.get("pass_rate", 0)
-        if pass_rate >= 100:
-            rate_color = "#4ade80"
-        elif pass_rate >= 70:
-            rate_color = "#fbbf24"
-        else:
-            rate_color = "#f87171"
-
-        table_rows += f"""
-        <tr>
-            <td>{_safe_text(cat)}</td>
-            <td>{stats.get('scanned', 0)}</td>
-            <td class="mono">{stats.get('passed', 0)}</td>
-            <td class="mono fail">{stats.get('failed', 0)}</td>
-            <td class="status" style="color: {rate_color};">{pass_rate}%</td>
-        </tr>
-        """
-
-    detail_cards = ""
-    for res in raw_details:
-        is_violation = bool(res.get("is_violation"))
-        badge_color = "#f87171" if is_violation else "#4ade80"
-        badge_text = "BREACH" if is_violation else "PASS"
-        badge_class = "badge breach" if is_violation else "badge pass"
-
-        detail_cards += f"""
-        <article class="detail-card">
-            <div class="detail-header">
-                <div>
-                    <div class="detail-id">{_safe_text(res.get('attack_id', 'N/A'))}</div>
-                    <div class="detail-cat">{_safe_text(res.get('category', 'unknown'))}</div>
-                </div>
-                <span class="{badge_class}" style="border-color: {badge_color}; color: {badge_color};">{badge_text}</span>
-            </div>
-            <div class="detail-content">
-                <div class="detail-field">
-                    <span class="label">Prompt</span>
-                    <span class="value">{_safe_text(res.get('prompt', ''))}</span>
-                </div>
-                <div class="detail-field">
-                    <span class="label">Response</span>
-                    <span class="value code">{_safe_text(res.get('target_response', ''))}</span>
-                </div>
-                <div class="detail-field">
-                    <span class="label">Verified</span>
-                    <span class="value quote">{_safe_text(res.get('verbatim_quotes', []))}</span>
-                </div>
-                <div class="detail-field">
-                    <span class="label">Justification</span>
-                    <span class="value reason">{_safe_text(res.get('reasoning', ''))}</span>
-                </div>
-            </div>
-        </article>
-        """
+    category_rows = _render_category_rows(categories)
+    finding_cards = _render_finding_cards(findings)
 
     html_content = f"""
     <!DOCTYPE html>
@@ -326,13 +341,13 @@ def generate_html_report(report_data: dict, output_path: str | None = None):
                             <th>Rate</th>
                         </tr>
                     </thead>
-                    <tbody>{table_rows}</tbody>
+                    <tbody>{category_rows}</tbody>
                 </table>
             </div>
 
             <section id="test-cases">
                 <div class="section-title">Test cases</div>
-                {detail_cards}
+                {finding_cards}
             </section>
         </div>
     </body>

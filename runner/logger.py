@@ -1,22 +1,25 @@
 import asyncio
 from typing import List
 
+
 class BroadcastLogger:
+    """Fans out log lines to every connected WebSocket client."""
+
     def __init__(self):
-        self.active_connections: List[asyncio.Queue] = []
+        self.subscribers: List[asyncio.Queue] = []
 
-    def register_client(self) -> asyncio.Queue:
-        queue = asyncio.Queue()
-        self.active_connections.append(queue)
-        return queue
+    def subscribe(self) -> asyncio.Queue:
+        subscriber_queue = asyncio.Queue()
+        self.subscribers.append(subscriber_queue)
+        return subscriber_queue
 
-    def unregister_client(self, queue: asyncio.Queue):
-        if queue in self.active_connections:
-            self.active_connections.remove(queue)
+    def unsubscribe(self, subscriber_queue: asyncio.Queue):
+        if subscriber_queue in self.subscribers:
+            self.subscribers.remove(subscriber_queue)
 
-    async def log(self, message: str):
-        print(message)
-        for queue in self.active_connections:
-            await queue.put(message)
+    async def broadcast(self, message: str):
+        for subscriber_queue in self.subscribers:
+            await subscriber_queue.put(message)
+
 
 ws_logger = BroadcastLogger()

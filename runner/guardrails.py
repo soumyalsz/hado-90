@@ -1,25 +1,26 @@
 import re
 from typing import Tuple
 
-BANNED_OUTPUT_SIGNATURES = [
-    r"system compromised",
-    r"override successful",
-    r"security bypass confirmed",
+COMPROMISE_PATTERNS = [
+    re.compile(pattern)
+    for pattern in [
+        r"system compromised",
+        r"override successful",
+        r"security bypass confirmed",
+    ]
 ]
 
-def scan_output_guardrail(raw_llm_output: str) -> Tuple[bool, str]:
-    """
-    Scans the raw text output from the target model before it reaches the user.
-    If a critical security signature is found, it overrides the response.
-    """
-    cleaned_output = raw_llm_output.lower().strip()
-    
-    for pattern in BANNED_OUTPUT_SIGNATURES:
-        if re.search(pattern, cleaned_output):
-            secured_fallback = (
+
+def scan_output_guardrail(model_output: str) -> Tuple[bool, str]:
+    """Checks model output for known compromise signatures and blocks them."""
+    lowered = model_output.lower().strip()
+
+    for pattern in COMPROMISE_PATTERNS:
+        if pattern.search(lowered):
+            blocked_response = (
                 "[GUARDRAIL INTERCEPT] Safety violation detected in model output. "
                 "Transmission terminated."
             )
-            return True, secured_fallback
+            return True, blocked_response
 
-    return False, raw_llm_output
+    return False, model_output

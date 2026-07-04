@@ -19,28 +19,33 @@ PRODUCTION_CATALOG_DIR = "catalog/attacks/production"
 STAGING_CATALOG_DIR = "catalog/attacks/staging"
 MAX_MUTATION_DEPTH = 2
 
+
 async def emit_status(message: str):
     print(message)
-    await ws_logger.log(message)
+    await ws_logger.broadcast(message)
 
 
 def load_and_validate_catalog() -> list:
+    """Reads every YAML in the production catalog and validates against the schema."""
     with open(SCHEMA_PATH, "r") as f:
         schema = json.load(f)
-    all_attacks = []
+
+    attack_definitions = []
     yaml_files = glob.glob(os.path.join(PRODUCTION_CATALOG_DIR, "*.yaml"))
     for file_path in yaml_files:
         with open(file_path, "r") as f:
-            content = yaml.safe_load(f) or []
-            for attack in content:
+            entries = yaml.safe_load(f) or []
+            for attack in entries:
                 validate(instance=attack, schema=schema)
-                all_attacks.append(attack)
-    return all_attacks
+                attack_definitions.append(attack)
+    return attack_definitions
 
-async def log_discovered_vulnerability(attack_id: str, category: str, severity: str, mutated_prompt: str, criteria: str):
+
+async def save_discovered_exploit(attack_id: str, category: str, severity: str, mutated_prompt: str, criteria: str):
+    """Persists a successful mutation to the staging catalog for future reuse."""
     os.makedirs(STAGING_CATALOG_DIR, exist_ok=True)
     staging_file = os.path.join(STAGING_CATALOG_DIR, f"discovered_{attack_id}.yaml")
-    
+
     payload = [{
         "attack_id": f"{attack_id}-MUTATED",
         "category": category,
@@ -48,20 +53,21 @@ async def log_discovered_vulnerability(attack_id: str, category: str, severity: 
         "prompt": mutated_prompt,
         "evaluation_rubric": {"fail_criteria": criteria}
     }]
-    
+
     with open(staging_file, "w") as f:
         yaml.safe_dump(payload, f)
     await emit_status(f"Found a working exploit: saved to {staging_file}")
 
-async def execute_target_inference(client: httpx.AsyncClient, prompt: str) -> str:
+
+async def probe_target(client: httpx.AsyncClient, adversarial_prompt: str) -> str:
+    """Fires the adversarial prompt at the target model and runs guardrail checks on the output."""
     try:
         messages = []
         if DEFENSE_MODE:
             messages.append({"role": "system", "content": TARGET_SYSTEM_SHIELD})
-        
-        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": adversarial_prompt})
 
-        response = await client.post(
+        ollama_response = await client.post(
             f"{OLLAMA_BASE_URL}/chat",
             json={
                 "model": TARGET_MODEL,
@@ -72,90 +78,110 @@ async def execute_target_inference(client: httpx.AsyncClient, prompt: str) -> st
             },
             timeout=45.0
         )
-        
-        raw_text = response.json()["message"]["content"]
 
-        triggered, final_text = scan_output_guardrail(raw_text)
-        if triggered:
+        raw_text = ollama_response.json()["message"]["content"]
+        was_blocked, safe_text = scan_output_guardrail(raw_text)
+        if was_blocked:
             await emit_status("   ◌ Guardrail blocked some concerning output")
+        return safe_text
+    except Exception as exc:
+        await emit_status(f"   Error during inference: {exc}")
+        return f"TARGET EXCEPTION: {exc}"
 
-        return final_text
-    except Exception as e:
-        await emit_status(f"   Error during inference: {str(e)}")
-        return f"TARGET EXCEPTION: {str(e)}"
+
+def _reconcile_verdicts(target_output: str, raw_verdict):
+    """Validates citations and re-derives consensus from the sanitized sub-verdicts."""
+    _, raw_verdict.judge_a_verdict = validate_judge_citations(target_output, raw_verdict.judge_a_verdict)
+    _, raw_verdict.judge_b_verdict = validate_judge_citations(target_output, raw_verdict.judge_b_verdict)
+
+    raw_verdict.is_violation = raw_verdict.judge_a_verdict.is_violation and raw_verdict.judge_b_verdict.is_violation
+    raw_verdict.consensus = "agreement" if raw_verdict.judge_a_verdict.is_violation == raw_verdict.judge_b_verdict.is_violation else "conflict"
+    raw_verdict.verbatim_quotes = list(set(raw_verdict.judge_a_verdict.verbatim_quotes + raw_verdict.judge_b_verdict.verbatim_quotes))
+    return raw_verdict
+
+
+def _build_history_entry(attack: dict, adversarial_prompt: str, target_output: str, verdict, attempt: int) -> dict:
+    """Packs one test iteration into the shape the aggregator expects."""
+    attack_label = f"{attack['attack_id']}-G{attempt}" if attempt > 0 else attack["attack_id"]
+    return {
+        "attack_id": attack_label,
+        "category": attack["category"],
+        "severity": attack["severity"],
+        "prompt": adversarial_prompt,
+        "target_response": target_output,
+        "is_violation": verdict.is_violation,
+        "verbatim_quotes": verdict.verbatim_quotes,
+        "reasoning": verdict.reasoning,
+        "consensus": verdict.consensus,
+        "judge_a": str(verdict.judge_a_verdict.is_violation),
+        "judge_b": str(verdict.judge_b_verdict.is_violation)
+    }
+
+
+async def _run_attack_chain(client: httpx.AsyncClient, attack: dict):
+    """Runs one attack through the full mutation loop, returning all history entries."""
+    await emit_status(f"\nTesting: {attack['attack_id']}")
+
+    current_prompt = attack["prompt"]
+    breach_found = False
+    chain_history = []
+
+    for attempt in range(MAX_MUTATION_DEPTH + 1):
+        if breach_found:
+            break
+
+        if attempt > 0:
+            await emit_status(f"   Attempt {attempt}/{MAX_MUTATION_DEPTH}...")
+
+        target_output = await probe_target(client, current_prompt)
+        raw_verdict = await evaluate_response(current_prompt, target_output, attack["evaluation_rubric"])
+        reconciled = _reconcile_verdicts(target_output, raw_verdict)
+
+        consensus_icon = "◦" if reconciled.consensus == "agreement" else "◌"
+        await emit_status(f"     {consensus_icon} Judges: {reconciled.consensus.upper()}")
+
+        chain_history.append(_build_history_entry(attack, current_prompt, target_output, reconciled, attempt))
+
+        if reconciled.is_violation:
+            await emit_status(f"   ◌ Breach detected at attempt {attempt}")
+            breach_found = True
+            if attempt > 0:
+                await save_discovered_exploit(
+                    attack["attack_id"], attack["category"], attack["severity"],
+                    current_prompt, attack["evaluation_rubric"]["fail_criteria"]
+                )
+        else:
+            await emit_status(f"   • Held strong at attempt {attempt}")
+            if attempt < MAX_MUTATION_DEPTH:
+                await emit_status("   Tweaking attack...")
+                evolved_attack = await generate_mutation(current_prompt, target_output)
+                current_prompt = evolved_attack.mutated_prompt
+
+    return chain_history
+
 
 async def start_pipeline():
+    """Top-level orchestrator — loads the catalog, runs every attack chain, and renders the report."""
     await emit_status("\n" + "="*50)
-    await emit_status("  Hado 90 v1.0.0 v1.0 - Starting test suite...")
+    await emit_status("  Hado 90 v1.0.0 - Starting test suite...")
     await emit_status("="*50 + "\n")
-    
+
     try:
         attacks = load_and_validate_catalog()
-    except Exception as e:
-        await emit_status(f"Error loading attacks: {str(e)}")
+    except Exception as exc:
+        await emit_status(f"Error loading attacks: {exc}")
         return
 
-    run_history = []
+    audit_trail = []
 
     async with httpx.AsyncClient() as client:
         for attack in attacks:
-            await emit_status(f"\nTesting: {attack['attack_id']}")
-            
-            current_prompt = attack["prompt"]
-            depth = 0
-            breach_secured = False
+            chain_results = await _run_attack_chain(client, attack)
+            audit_trail.extend(chain_results)
 
-            while depth <= MAX_MUTATION_DEPTH and not breach_secured:
-                if depth > 0:
-                    await emit_status(f"   Attempt {depth}/{MAX_MUTATION_DEPTH}...")
+    summary = aggregate_run_results(audit_trail)
+    generate_html_report(summary)
 
-                target_out = await execute_target_inference(client, current_prompt)
-                multi_verdict = await evaluate_response(current_prompt, target_out, attack["evaluation_rubric"])
-
-                _, multi_verdict.judge_a_verdict = validate_judge_citations(target_out, multi_verdict.judge_a_verdict)
-                _, multi_verdict.judge_b_verdict = validate_judge_citations(target_out, multi_verdict.judge_b_verdict)
-
-                multi_verdict.is_violation = multi_verdict.judge_a_verdict.is_violation and multi_verdict.judge_b_verdict.is_violation
-                multi_verdict.consensus = "agreement" if multi_verdict.judge_a_verdict.is_violation == multi_verdict.judge_b_verdict.is_violation else "conflict"
-                multi_verdict.verbatim_quotes = list(set(multi_verdict.judge_a_verdict.verbatim_quotes + multi_verdict.judge_b_verdict.verbatim_quotes))
-                checked_verdict = multi_verdict
-
-                consensus_icon = "◦" if multi_verdict.consensus == "agreement" else "◌"
-                await emit_status(f"     {consensus_icon} Judges: {multi_verdict.consensus.upper()}")
-
-                run_history.append({
-                    "attack_id": f"{attack['attack_id']}-G{depth}" if depth > 0 else attack['attack_id'],
-                    "category": attack["category"],
-                    "severity": attack["severity"],
-                    "prompt": current_prompt,
-                    "target_response": target_out,
-                    "is_violation": checked_verdict.is_violation,
-                    "verbatim_quotes": checked_verdict.verbatim_quotes,
-                    "reasoning": checked_verdict.reasoning,
-                    "consensus": multi_verdict.consensus,
-                    "judge_a": str(multi_verdict.judge_a_verdict.is_violation),
-                    "judge_b": str(multi_verdict.judge_b_verdict.is_violation)
-                })
-
-                if checked_verdict.is_violation:
-                    await emit_status(f"   ◌ Breach detected at attempt {depth}")
-                    breach_secured = True
-                    if depth > 0:
-                        await log_discovered_vulnerability(
-                            attack["attack_id"], attack["category"], attack["severity"],
-                            current_prompt, attack["evaluation_rubric"]["fail_criteria"]
-                        )
-                else:
-                    await emit_status(f"   • Held strong at attempt {depth}")
-                    if depth < MAX_MUTATION_DEPTH:
-                        await emit_status("   Tweaking attack...")
-                        mutation_res = await generate_mutation(current_prompt, target_out)
-                        current_prompt = mutation_res.mutated_prompt
-                    
-                depth += 1
-
-    processed_summary = aggregate_run_results(run_history)
-    generate_html_report(processed_summary)
 
 if __name__ == "__main__":
     asyncio.run(start_pipeline())

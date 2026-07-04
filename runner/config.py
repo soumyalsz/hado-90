@@ -1,34 +1,22 @@
 import subprocess
 import os
 
+
 def detect_available_vram_gb() -> float:
-    """
-    Detects available GPU or system memory in gigabytes.
-    
-    Tries multiple hardware detection methods in order:
-    1. NVIDIA GPU detection (nvidia-smi)
-    2. Apple Silicon detection (sysctl)
-    3. System RAM fallback (psutil)
-    
-    This helps the framework automatically select appropriate models
-    for your hardware without manual configuration.
-    
-    Returns:
-        float: Available memory in GB (or 4.0 GB as safe default)
-    """
+    """Sniffs GPU/system memory so we can auto-pick models that actually fit."""
     try:
-        out = subprocess.check_output(
+        raw_output = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
             stderr=subprocess.DEVNULL
         )
-        vram_mb = float(out.decode().strip().splitlines()[0])
-        return vram_mb / 1024
+        total_mb = float(raw_output.decode().strip().splitlines()[0])
+        return total_mb / 1024
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
-    
+
     try:
-        out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], stderr=subprocess.DEVNULL)
-        total_bytes = float(out.decode().strip())
+        raw_output = subprocess.check_output(["sysctl", "-n", "hw.memsize"], stderr=subprocess.DEVNULL)
+        total_bytes = float(raw_output.decode().strip())
         return (total_bytes / (1024**3)) * 0.7
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
@@ -40,38 +28,17 @@ def detect_available_vram_gb() -> float:
     except ImportError:
         return 4.0
 
-def resolve_runtime_models() -> tuple[str, str]:
-    """
-    Auto-selects target and judge models based on available GPU VRAM.
-    
-    This function helps users run Hado 90 v1.0.0 without manual configuration.
-    It balances model capability against hardware constraints:
-    
-    - 11+ GB VRAM: Uses larger models for better attack coverage
-    - 6-10 GB VRAM: Balanced setup for typical developer laptops
-    - Under 6 GB: Conservative setup that still functions reliably
-    
-    Returns:
-        tuple[str, str]: (target_model, judge_model)
-    
-    Note: Override these by setting environment variables:
-        export TARGET_MODEL="qwen2.5:14b"
-        export JUDGE_MODEL_A="llama3.1:8b"
-        export JUDGE_MODEL_B="qwen2.5:14b"
-    """
-    vram = detect_available_vram_gb()
-    
-    if vram >= 11:
-        target = "qwen2.5:14b"
-        judge = "llama3.1:8b"
-    elif vram >= 6:
-        target = "qwen2.5:7b"
-        judge = "llama3.2:3b"
-    else:
-        target = "llama3.2:1b"
-        judge = "llama3.2:3b"
 
-    return target, judge
+def resolve_runtime_models() -> tuple[str, str]:
+    """Picks a target/judge pair that won't OOM on your hardware."""
+    vram = detect_available_vram_gb()
+
+    if vram >= 11:
+        return "qwen2.5:14b", "llama3.1:8b"
+    if vram >= 6:
+        return "qwen2.5:7b", "llama3.2:3b"
+    return "llama3.2:1b", "llama3.2:3b"
+
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/api")
 

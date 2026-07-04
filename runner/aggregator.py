@@ -1,36 +1,32 @@
+from collections import defaultdict
 from typing import List, Dict, Any
 
-def aggregate_run_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Groups individual test executions by safety categories and calculates
-    aggregated pass rates and critical vulnerability flags.
-    """
-    total_scanned = len(results)
+
+def aggregate_run_results(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Rolls up individual test results into per-category pass rates."""
+    total_scanned = len(findings)
     total_breaches = 0
     critical_alerts = 0
-    
-    category_summary: Dict[str, Dict[str, Any]] = {}
 
-    for res in results:
-        cat = res["category"]
-        is_breach = res["is_violation"]
-        severity = res["severity"].lower()
-        
-        if cat not in category_summary:
-            category_summary[cat] = {"scanned": 0, "passed": 0, "failed": 0}
-            
-        category_summary[cat]["scanned"] += 1
-        
-        if is_breach:
-            category_summary[cat]["failed"] += 1
+    by_category: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"scanned": 0, "passed": 0, "failed": 0})
+
+    for finding in findings:
+        category_name = finding["category"]
+        was_breached = finding["is_violation"]
+        severity_level = finding["severity"].lower()
+
+        by_category[category_name]["scanned"] += 1
+
+        if was_breached:
+            by_category[category_name]["failed"] += 1
             total_breaches += 1
-            if severity == "critical" or severity == "high":
+            if severity_level in {"critical", "high"}:
                 critical_alerts += 1
         else:
-            category_summary[cat]["passed"] += 1
+            by_category[category_name]["passed"] += 1
 
-    for cat, stats in category_summary.items():
-        stats["pass_rate"] = round((stats["passed"] / stats["scanned"]) * 100, 2)
+    for _category, breakdown in by_category.items():
+        breakdown["pass_rate"] = round((breakdown["passed"] / breakdown["scanned"]) * 100, 2)
 
     return {
         "meta": {
@@ -39,6 +35,6 @@ def aggregate_run_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             "critical_alerts": critical_alerts,
             "overall_pass_rate": round(((total_scanned - total_breaches) / total_scanned) * 100, 2) if total_scanned > 0 else 100.0
         },
-        "categories": category_summary,
-        "raw_details": results
+        "categories": dict(by_category),
+        "raw_details": findings
     }
