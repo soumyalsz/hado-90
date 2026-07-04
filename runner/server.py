@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from runner.main import start_pipeline
 from runner.logger import ws_logger
+from runner.config import TARGET_MODEL, JUDGE_MODEL_A, JUDGE_MODEL_B
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 REPORTS_DIR = BASE_DIR / "reports"
@@ -21,7 +22,10 @@ async def serve_dashboard():
     """Serves the dashboard UI."""
     index_path = os.path.join("runner", "index.html")
     with open(index_path, "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+        content = f.read()
+        content = content.replace("{{ TARGET_MODEL }}", TARGET_MODEL)
+        content = content.replace("{{ JUDGES }}", f"{JUDGE_MODEL_A} + {JUDGE_MODEL_B}")
+        return HTMLResponse(content=content)
 
 
 @app.post("/api/run")

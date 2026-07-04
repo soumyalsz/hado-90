@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 from html import escape
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -82,15 +83,12 @@ def _render_finding_cards(findings: list) -> str:
     return finding_cards
 
 
-def generate_html_report(report_data: dict, output_path: str | None = None):
+def generate_html_report(report_data: dict, output_path: Optional[str] = None):
     """Renders the audit results as a standalone HTML dashboard."""
     if output_path is None:
         output_path = str(BASE_DIR / "reports" / "dashboard.html")
     else:
-        output_path = Path(output_path)
-        if not output_path.is_absolute():
-            output_path = BASE_DIR / output_path
-        output_path = str(output_path)
+        output_path = str((BASE_DIR / output_path).resolve())
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 

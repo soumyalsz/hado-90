@@ -1,4 +1,5 @@
 import httpx
+from typing import Optional
 from pydantic import BaseModel, Field
 from runner.config import OLLAMA_BASE_URL, MUTATOR_MODEL
 
@@ -8,7 +9,7 @@ class MutationResult(BaseModel):
     mutated_prompt: str = Field(description="The complete, fully rewritten adversarial prompt variant.")
 
 
-def ensure_distinct_mutation(original_prompt: str, prior_prompt: str | None = None, candidate: str | None = None) -> str:
+def ensure_distinct_mutation(original_prompt: str, prior_prompt: Optional[str] = None, candidate: Optional[str] = None) -> str:
     """Makes sure the mutation actually diverges from what we already tried."""
     if candidate is not None:
         cleaned_candidate = candidate.strip()

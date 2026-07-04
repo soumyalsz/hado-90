@@ -181,6 +181,7 @@ async def start_pipeline():
 
     summary = aggregate_run_results(audit_trail)
     generate_html_report(summary)
+    await emit_status("Dashboard generated: " + str(BASE_DIR / "reports" / "dashboard.html"))
 
 
 if __name__ == "__main__":
