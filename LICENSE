@@ -1,0 +1,34 @@
+END USER LICENSE AGREEMENT (EULA)
+=================================
+
+Copyright (c) 2026 soumyalsz. All rights reserved.
+
+PRODUCT: Hado 90 v1.0.0 (Adversarial Red-Teaming & Consensus Framework)
+
+TERMS OF USE AND DISTRIBUTION:
+
+1. FREEMIUM PERSONAL USE LICENSE
+Permission is hereby granted, free of charge, to any individual to download,
+install, and execute the compiled binary version of this software strictly
+for personal, educational, security evaluation, and non-commercial research purposes.
+
+2. PROPRIETARY RIGHTS & CODE VISIBILITY
+The underlying source code, system architecture, logic pathways, layouts, and
+user interface designs visible in this repository remain the exclusive intellectual
+property of the primary author (soumyalsz). Public visibility of the source code does
+NOT constitute a grant of open-source rights.
+
+3. STRICT PROHIBITIONS
+You are explicitly forbidden from:
+
+- Copying, redistributing, publishing, sublicensing, or selling the software or its source code.
+- Modifying, adapting, translating, or creating derivative works based on the source code.
+- Reverse-engineering, decompiling, or disassembling the compiled binary distribution.
+- Re-licensing or attempting to re-release this project under any Open Source Initiative (OSI)
+  approved license (e.g., MIT, Apache, GPL).
+
+1. TERMINATION
+Any violation of these terms automatically terminates your permission to use the software
+and constitutes an immediate infringement of copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
